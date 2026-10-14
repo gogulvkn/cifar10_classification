@@ -1,3 +1,4 @@
 __pycache__/
 *.pyc
 .venv/
+cifar10_resnet50.keras

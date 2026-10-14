@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CIFAR-10 Image Classifier</title>
+<style>
+  :root {
+    --paper: #f4f6f8;
+    --panel: #ffffff;
+    --ink: #101828;
+    --muted: #5b6678;
+    --line: #d5dbe3;
+    --accent: #1f4fe0;
+    --accent-ink: #ffffff;
+    --error: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0e1320;
+      --panel: #161d2e;
+      --ink: #e8ecf4;
+      --muted: #97a3b8;
+      --line: #2b3550;
+      --accent: #6d8dff;
+      --accent-ink: #0e1320;
+      --error: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 12px; }
+  .lede { color: var(--muted); margin: 0 0 32px; max-width: 52ch; }
+
+  .drop {
+    display: block;
+    border: 2px dashed var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 28px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); }
+  .drop input { position: absolute; opacity: 0; pointer-events: none; }
+  .drop strong { display: block; font-size: 1.05rem; }
+  .drop span { color: var(--muted); font-size: .92rem; }
+  #preview { display: none; max-width: 100%; max-height: 280px; margin: 0 auto 16px; border-radius: 4px; image-rendering: auto; }
+
+  button {
+    margin-top: 16px;
+    width: 100%;
+    padding: 14px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, .drop:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  #result { margin-top: 32px; display: none; }
+  .verdict { font-size: clamp(2rem, 7vw, 3.2rem); font-weight: 700; letter-spacing: -0.02em; text-transform: capitalize; margin: 0; }
+  .verdict small { font-size: 1rem; font-weight: 500; color: var(--muted); margin-left: 8px; letter-spacing: 0; }
+  .bars { margin-top: 20px; display: grid; gap: 12px; }
+  .row { display: grid; grid-template-columns: 96px 1fr 56px; align-items: center; gap: 12px; font-size: .95rem; }
+  .row .name { text-transform: capitalize; }
+  .track { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+  .fill { height: 100%; width: 0; background: var(--accent); border-radius: 5px; transition: width .5s ease; }
+  .row .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #error { margin-top: 20px; color: var(--error); display: none; }
+  .note { margin-top: 40px; color: var(--muted); font-size: .88rem; }
+  @media (prefers-reduced-motion: reduce) { .fill, .drop { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>What is in this picture?</h1>
+  <p class="lede">Upload a photo and the model picks one of 10 classes: airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck.</p>
+
+  <label class="drop" id="drop">
+    <img id="preview" alt="Selected image preview">
+    <input type="file" id="file" accept="image/*">
+    <strong id="dropTitle">Choose an image</strong>
+    <span id="dropHint">or drag and drop it here</span>
+  </label>
+
+  <button id="go" disabled>Classify image</button>
+  <p id="error" role="alert"></p>
+
+  <section id="result" aria-live="polite">
+    <p class="verdict"><span id="label"></span><small id="conf"></small></p>
+    <div class="bars" id="bars"></div>
+  </section>
+
+  <p class="note">The model only knows these 10 classes, so anything else (a horse-sized cow, a bus) will be forced into the closest one.</p>
+</main>
+
+<script>
+  const fileInput = document.getElementById('file');
+  const drop = document.getElementById('drop');
+  const preview = document.getElementById('preview');
+  const go = document.getElementById('go');
+  const err = document.getElementById('error');
+  const result = document.getElementById('result');
+  let current = null;
+
+  function setFile(f) {
+    if (!f || !f.type.startsWith('image/')) return;
+    current = f;
+    preview.src = URL.createObjectURL(f);
+    preview.style.display = 'block';
+    document.getElementById('dropTitle').textContent = f.name;
+    document.getElementById('dropHint').textContent = 'Click to choose a different image';
+    go.disabled = false;
+    err.style.display = 'none';
+    result.style.display = 'none';
+  }
+
+  fileInput.addEventListener('change', e => setFile(e.target.files[0]));
+  ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+
+  go.addEventListener('click', async () => {
+    if (!current) return;
+    go.disabled = true;
+    go.textContent = 'Classifying…';
+    err.style.display = 'none';
+    try {
+      const body = new FormData();
+      body.append('file', current);
+      const res = await fetch('/predict', { method: 'POST', body });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Prediction failed.');
+
+      document.getElementById('label').textContent = data.label;
+      document.getElementById('conf').textContent = (data.confidence * 100).toFixed(1) + '% sure';
+      const bars = document.getElementById('bars');
+      bars.innerHTML = '';
+      data.top3.forEach(p => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span class="name"></span><div class="track"><div class="fill"></div></div><span class="pct"></span>`;
+        row.querySelector('.name').textContent = p.label;
+        row.querySelector('.pct').textContent = (p.confidence * 100).toFixed(1) + '%';
+        bars.appendChild(row);
+        requestAnimationFrame(() => row.querySelector('.fill').style.width = (p.confidence * 100) + '%');
+      });
+      result.style.display = 'block';
+    } catch (e) {
+      err.textContent = e.message + ' If this is the first request after idle, wait a minute and try again.';
+      err.style.display = 'block';
+    } finally {
+      go.disabled = false;
+      go.textContent = 'Classify image';
+    }
+  });
+</script>
+</body>
+</html>
